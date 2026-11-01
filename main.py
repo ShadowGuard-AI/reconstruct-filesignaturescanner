@@ -71,19 +71,21 @@ class FileSignatureScanner:
                     if header.startswith(bytes.fromhex(signature)):
                         logging.info(f"Identified file type as: {file_type} (based on signature database)")
                         return file_type
-        else:
-            # Use python-magic for identification
-            try:
-                mime_type = self.magic.from_buffer(header)
-                if mime_type:
-                    logging.info(f"Identified file type as: {mime_type} (using python-magic)")
-                    return mime_type
-                else:
-                     logging.warning(f"Could not determine file type for {file_path} using python-magic.")
-                     return None
-            except Exception as e:
-                logging.error(f"Error using python-magic: {e}")
-                return None
+            logging.info("No custom signature matched; falling back to python-magic.")
+
+        # Use python-magic for identification, including as the fallback
+        # when a custom database was supplied but no signature matched.
+        try:
+            mime_type = self.magic.from_buffer(header)
+            if mime_type:
+                logging.info(f"Identified file type as: {mime_type} (using python-magic)")
+                return mime_type
+            else:
+                 logging.warning(f"Could not determine file type for {file_path} using python-magic.")
+                 return None
+        except Exception as e:
+            logging.error(f"Error using python-magic: {e}")
+            return None
 
         logging.warning(f"File type not identified for: {file_path}")
         return None
@@ -147,7 +149,7 @@ def setup_argparse() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description="Scans a file and identifies its type based on signature.")
     parser.add_argument("file_path", help="Path to the file to scan.")
-    parser.add_argument("-d", "--database", help="Path to a custom signature database (JSON).", required=False)
+    parser.add_argument("-d", "--database", help="Path to a custom signature database (JSON). If no custom signature matches, identification falls back to python-magic.", required=False)
     parser.add_argument("-e", "--extract", action="store_true", help="Attempt data extraction based on identified file type.", required=False)
     parser.add_argument("-o", "--output", help="Path to save extracted data.", required=False)
     return parser
@@ -161,6 +163,14 @@ def main():
     args = parser.parse_args()
 
     try:
+        if args.output and os.path.realpath(args.output) == os.path.realpath(args.file_path):
+            print("Error: Output path must not be the scanned file itself.")
+            sys.exit(1)
+
+        if not os.path.exists(args.file_path):
+            print(f"Error: Target file does not exist: {args.file_path}")
+            sys.exit(1)
+
         scanner = FileSignatureScanner(signature_db=args.database)
         file_type = scanner.identify_file_type(args.file_path)
 
@@ -189,7 +199,8 @@ def main():
                     print("No data extracted.")
 
         else:
-            print("File type not identified.")
+            print("File type not identified: no signature matched and python-magic returned no type.")
+            sys.exit(1)
 
     except FileNotFoundError as e:
         print(f"Error: {e}")
