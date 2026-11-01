@@ -28,6 +28,10 @@ class FileSignatureScanner:
         """
         self.signature_db = signature_db
         self.signatures: Dict[str, List[str]] = {}  # type: ignore
+        # The magic object is built even when a custom database will answer
+        # every file, so a host without libmagic cannot construct the
+        # scanner at all. uncompress means a gzipped file is reported as the
+        # type of its contents, not as gzip.
         self.magic = magic.Magic(mime=True, uncompress=True)  # Initialize magic object for mime type detection
 
         if self.signature_db:
@@ -59,6 +63,10 @@ class FileSignatureScanner:
 
         try:
             with open(file_path, 'rb') as f:
+                # Everything downstream sees only these 1024 bytes. Formats whose
+                # signature sits at a fixed later offset, or at the end of the file
+                # like a zip central directory, are decided on evidence that is not
+                # in this buffer.
                 header = f.read(1024)  # Read a portion of the file for signature analysis
         except IOError as e:
             logging.error(f"Error reading file: {file_path} - {e}")
@@ -66,6 +74,11 @@ class FileSignatureScanner:
 
         if self.signature_db:
             # Custom signature database logic
+            # First match in dictionary order wins. If a short generic signature
+            # is listed before a longer specific one that extends it, the generic
+            # name shadows the specific one for every file. A signature string
+            # that is not valid hex raises ValueError out of this loop, and main
+            # reports it with the same wording it uses for a bad database file.
             for file_type, signatures in self.signatures.items():
                 for signature in signatures:
                     if header.startswith(bytes.fromhex(signature)):
@@ -110,6 +123,10 @@ class FileSignatureScanner:
                     # Example: Extract the first stream's data
                     for stream_name in ole.listdir():
                         if stream_name:
+                            # listdir gives paths as component lists, and I open only the first
+                            # component. A stream nested under a storage is opened by its parent
+                            # storage name instead, which fails or reads the wrong thing. The
+                            # early return also leaves the OleFileIO handle unclosed.
                             stream_data = ole.openstream(stream_name[0]).read()
                             logging.info(f"Extracted data from stream: {stream_name[0]}")
                             return stream_data  # Return the first stream for simplicity
